@@ -4,7 +4,7 @@
   Plugin URI: http://cdbt.ka2.org/
   Description: This plug-in allows you to perform data storage and reference by creating a free tables in database of WordPress.
   Version: 0.9.6
-  Author: Katsuhiko Maeno
+  Author: ka2
   Author URI: http://cdbt.ka2.org
   Copyright: 2014 monauralsound (email : ka2@ka2.org)
   License: GPL2 - http://www.gnu.org/licenses/gpl.txt

@@ -597,7 +597,7 @@ class CustomDatabaseTables {
 			$limit_clause = "LIMIT ";
 			$limit_clause .= (!empty($offset)) ? intval($offset) .', '. intval($limit) : intval($limit);
 		}
-		$search_key = preg_replace('/[\s　]+/', ' ', trim($search_key), -1);
+		$search_key = preg_replace('/[\s　]+/u', ' ', trim($search_key), -1);
 		$keywords = preg_split('/[\s]/', $search_key, 0, PREG_SPLIT_NO_EMPTY);
 		if (!empty($keywords)) {
 			$union_clauses = array();

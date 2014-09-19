@@ -51,6 +51,13 @@ class CustomDataBaseTables_Ajax {
 						die(__('No binary data.', PLUGIN_SLUG));
 					}
 					break;
+				case 'get_table_list': 
+					$response = '';
+					foreach ($cdbt->get_table_list('unmanageable') as $table_name) {
+						$response .= sprintf('<option value="%s">%s</option>'."\n", $table_name, $table_name);
+					}
+					die($response);
+					break;
 				default: 
 					die(__('Invalid access!', PLUGIN_SLUG));
 					break;

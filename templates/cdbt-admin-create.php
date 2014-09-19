@@ -7,6 +7,7 @@ if (is_array($inherit_values) && !empty($inherit_values)) {
 }
 $section = (isset($section) && !empty($section) && $section == 'run') ? 'run' : 'confirm';
 $handle = (isset($handle) && !empty($handle) && $handle == 'alter-table') ? 'alter-table' : 'create-table';
+$is_incorporate_table = (isset($incorporate_table) && !empty($incorporate_table)) ? true : false;
 
 if ($handle == 'alter-table') {
 	// Variables for alter table
@@ -61,6 +62,7 @@ $submit_label = ($handle == 'create-table') ? __('Create table', PLUGIN_SLUG) : 
 $cancel_label = __('Cancel', PLUGIN_SLUG);
 $table_name_label = __('Table Name', PLUGIN_SLUG);
 $table_name_placeholder = __('Enter Table Name', PLUGIN_SLUG);
+$incorporate_table_label = __('Incorporate Already Exists Table', PLUGIN_SLUG);
 $helper_msg1 = __('If you will create the new table, in default table name is used the table-prefix of WordPress&apos;s config.', PLUGIN_SLUG);
 $helper_msg2 = __('Table name in the current configuration:', PLUGIN_SLUG);
 $helper_msg3 = __('It does not reflect if you change the table name, and not re-created after you delete a table of current created. In addition, in this table name is not possible use the name of the origin table that WordPress generates.', PLUGIN_SLUG);
@@ -129,6 +131,11 @@ foreach ($roles as $param_name => $param_value) {
 
 if ($handle != 'alter-table') {
 	// to create table
+	if ($is_incorporate_table) {
+		$incorporate_options = sprintf('<option value="%s" selected="selected">%s</option>', $incorporate_table, $incorporate_table);
+	} else {
+		$incorporate_options = '<option value="" option-index="true">'. $incorporate_table_label .'</option>';
+	}
 	$content_html = <<<EOH
 <h3><span class="glyphicon glyphicon-wrench"></span> $tab_name_label</h3>
 <form method="post" class="form-horizontal" id="cdbt_create_table" role="form">
@@ -143,6 +150,12 @@ if ($handle != 'alter-table') {
 		<label for="cdbt_naked_table_name" class="col-sm-2 control-label">$table_name_label</label>
 		<div class="col-sm-3">
 			<input type="text" class="form-control" name="naked_table_name" id="cdbt_naked_table_name" placeholder="$table_name_placeholder" value="$naked_table_name" required>
+		</div>
+		<div class="col-sm-3">
+			<select type="text" class="form-control" name="incorporate_table" id="cdbt_incorporate_table" data-action="get_table_list">
+				$incorporate_options
+			</select>
+			<input type="hidden" name="is_incorporate_table" value="{$is_incorporate_table}">
 		</div>
 	</div>
 	<div class="form-group">

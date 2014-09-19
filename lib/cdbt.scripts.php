@@ -148,6 +148,25 @@ jQuery(document).ready(function($){
 					});
 				}
 			});
+			modal_obj.find('.cancel-close').click(function(e){
+				//e.preventDefault();
+				var query_string = window.location.search.substr(1).split('&') || '';
+				var queries = [];
+				query_string.forEach( function(elm){
+					var parse_elm = elm.split('=');
+					queries[parse_elm[0]] = parse_elm[1];
+				});
+				if (typeof queries['mode'] != 'undefined' && queries['mode'] == 'admin') {
+					var hash_string = window.location.hash.substr(1) || $('.tab-pane.active').attr('id');
+					if (hash_string == 'cdbt-create') {
+						$('input[name="is_incorporate_table"]').val('false');
+						$('#cdbt_incorporate_table').html('<option value="" option-index="true"><?php _e('Incorporate Already Exists Table', PLUGIN_SLUG); ?></option>');
+					} else {
+						var url = location.href + '#' + hash_string;
+						location.assign(url);
+					}
+				}
+			});
 		} else {
 			modal_obj.find('.run-process').parent('button').hide();
 		}
@@ -195,6 +214,54 @@ jQuery(document).ready(function($){
 	
 	$('#cdbt_naked_table_name').on('click focus blur', set_current_table_name);
 	$('#cdbt_use_wp_prefix_for_newtable').on('click blur', set_current_table_name);
+	
+	// incorporate table
+	$('#cdbt_incorporate_table').on('click', function(e) {
+		//e.stopImmediatePropagation();
+		if ($(this).attr('data-proc') != 'loaded') {
+			$(this).children('option[option-index="true"]').text("<?php echo __('Now searching...', PLUGIN_SLUG); ?>");
+			var post_data = {
+				action: 'cdbt_ajax_core', 
+				mode: $(this).attr('data-action'), 
+				token: '<?php echo $ajax_nonce; ?>', 
+				'_ajax_nonce': '<?php echo $action_nonce; ?>' 
+			}
+			$.ajax({
+				type: 'POST', 
+				url: "<?php echo esc_js(esc_url_raw(admin_url('admin-ajax.php', is_ssl() ? 'https' : 'http'))); ?>", 
+				data: post_data
+			}).done(function(res){
+				$('#cdbt_incorporate_table').attr('data-proc', 'loaded').append(res).blur();
+				$('#cdbt_incorporate_table').children('option[option-index="true"]').text("<?php echo __('Select an incorporate table', PLUGIN_SLUG); ?>");
+				$('#cdbt_incorporate_table').focus();
+			});
+		}
+	});
+	
+	$('#cdbt_incorporate_table').on('change', function() {
+		if ($(this).attr('data-proc') == 'loaded') {
+			var target_table = $(this).filter(':selected').context.value;
+			if (target_table != '') {
+				$('#cdbt_naked_table_name').val(target_table).attr('disabled', 'disabled');
+				$('input[name="is_incorporate_table"]').val('true');
+				$('#cdbt_use_wp_prefix_for_newtable').attr('disabled', 'disabled');
+				$('#cdbt_table_comment').val('').attr('disabled', 'disabled');
+				$('#cdbt_db_engine').attr('disabled', 'disabled');
+				$('#sql-statements-mode').attr('disabled', 'disabled');
+				$('#sql-table-creator').attr('disabled', 'disabled');
+				$('#cdbt_create_table_sql').attr('disabled', 'disabled');
+			} else {
+				$('#cdbt_naked_table_name').val('').removeAttr('disabled');
+				$('input[name="is_incorporate_table"]').val('false');
+				$('#cdbt_use_wp_prefix_for_newtable').removeAttr('disabled');
+				$('#cdbt_table_comment').val('').removeAttr('disabled');
+				$('#cdbt_db_engine').removeAttr('disabled');
+				$('#sql-statements-mode').removeAttr('disabled');
+				$('#sql-table-creator').removeAttr('disabled');
+				$('#cdbt_create_table_sql').val("CREATE TABLE {table_name} ( \n\n)").removeAttr('disabled');
+			}
+		}
+	});
 	
 	function set_substance_sql() {
 		//console.info($('input[name="substance_sql"]').val());
@@ -288,6 +355,8 @@ jQuery(document).ready(function($){
 	$('#cdbt_general_setting_save').on('click', function() {
 		$('#cdbt_general_setting input[name="use_wp_prefix"]').val( $('#cdbt_use_wp_prefix').is(':checked') ? 'true' : 'false' );
 		$('#cdbt_general_setting input[name="cleaning_options"]').val( $('#cdbt_cleaning_options').is(':checked') ? 'true' : 'false' );
+		$('#cdbt_general_setting input[name="uninstall_options"]').val( $('#cdbt_uninstall_options').is(':checked') ? 'true' : 'false' );
+		$('#cdbt_general_setting input[name="resume_options"]').val( $('#cdbt_resume_options').is(':checked') ? 'true' : 'false' );
 		$('#cdbt_general_setting').submit();
 	});
 	

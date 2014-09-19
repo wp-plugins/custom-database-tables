@@ -12,7 +12,6 @@ $inherit_values = array();
 foreach ($_REQUEST as $key => $value) {
 	if (preg_match('/^(page|mode|_cdbt_token|action|handle|section|_wp_http_referer)$/', $key)) {
 		${$key} = $value;
-//var_dump('$'.$key.'="'.$value.'";'."\n");
 	} else {
 		$inherit_values[$key] = $value;
 	}
@@ -36,7 +35,7 @@ if (wp_verify_nonce($_cdbt_token, self::DOMAIN .'_'. $mode)) {
 		case 'general': 
 			if (isset($handle) && cdbt_compare_var($handle, 'save')) {
 				foreach ($inherit_values as $key => $value) {
-					if (preg_match('/^(use_wp_prefix|cleaning_options)$/', $key)) {
+					if (preg_match('/^(use_wp_prefix|cleaning_options|uninstall_options|resume_options)$/', $key)) {
 						$this->options[$key] = cdbt_get_boolean($value);
 					} else {
 						$this->options[$key] = $value;
@@ -44,143 +43,259 @@ if (wp_verify_nonce($_cdbt_token, self::DOMAIN .'_'. $mode)) {
 				}
 				if (update_option(self::DOMAIN, $this->options)) {
 					$msg = array('success', __('Completed successful to save option setting.', self::DOMAIN));
-				} else {
-					$msg = array('warning', __('Failed to save option setting. Please note it is not saved if there is no change.', self::DOMAIN));
-				}
-				if ($this->options['cleaning_options']) {
-					$prev_current_table = $this->current_table;
-					if (isset($this->options['tables']) && !empty($this->options['tables'])) {
-						$re_tables = array();
-						foreach ($this->options['tables'] as $i => $table) {
-							$this->current_table = $table['table_name'];
-							if (isset($table['table_type']) && $table['table_type'] != 'controller_table') {
-								if (cdbt_get_boolean($this->check_table_exists())) {
-									$re_tables[] = $table;
+					if ($this->options['resume_options']) {
+						$revision_tables = get_option(self::DOMAIN . '_previous_revision_backup');
+						if ($revision_tables !== false && isset($revision_tables['tables']) && count($revision_tables['tables']) > 0) {
+							$resume_count = 0;
+							foreach ($revision_tables['tables'] as $i => $past_table_data) {
+								if (isset($past_table_data['table_type']) && $past_table_data['table_type'] != 'controller_table') {
+									$is_same_table = false;
+									foreach ($this->options['tables'] as $j => $table_data) {
+										if ($table_data['table_name'] == $past_table_data['table_name']) {
+											$is_same_table = true;
+											break;
+										}
+									}
+									if (!$is_same_table) {
+										if (cdbt_get_boolean($this->check_table_exists($past_table_data['table_name']))) {
+											if (isset($past_table_data['sql']) && !empty($past_table_data['sql'])) {
+												$table_create_sql = $past_table_data['sql'];
+											} else {
+												$res_ary = $this->get_create_table_sql($past_table_data['table_name']);
+												$table_create_sql = $res_ary[1];
+											}
+											$this->options['tables'][] = array(
+												'table_name' => $past_table_data['table_name'], 
+												'table_type' => $past_table_data['table_type'], 
+												'sql' => $table_create_sql, 
+												'db_engine' => $past_table_data['db_engine'], 
+												'show_max_records' => isset($past_table_data['show_max_records']) ? $past_table_data['show_max_records'] : $this->options['tables'][0]['show_max_records'], 
+												'roles' => isset($past_table_data['roles']) ? $past_table_data['roles'] : $this->options['tables'][0]['roles'], 
+												'display_format' => isset($past_table_data['display_format']) ? $past_table_data['display_format'] : $this->options['tables'][0]['display_format'], 
+											);
+											$resume_count++;
+										}
+									}
 								}
-							} else {
-								$re_tables[] = $table;
+							}
+							if ($resume_count > 0) {
+								update_option(self::DOMAIN, $this->options);
+								$msg[1] .= "\n " . __('And have resumed as management table from in the past table setting.', self::DOMAIN);
 							}
 						}
-						$this->options['tables'] = $re_tables;
-						update_option(self::DOMAIN, $this->options);
 					}
-					$this->current_table = $prev_current_table;
+					if ($this->options['cleaning_options']) {
+						$prev_current_table = $this->current_table;
+						if (isset($this->options['tables']) && !empty($this->options['tables'])) {
+							$re_tables = array();
+							foreach ($this->options['tables'] as $i => $table) {
+								$this->current_table = $table['table_name'];
+								if (isset($table['table_type']) && $table['table_type'] != 'controller_table') {
+									if (cdbt_get_boolean($this->check_table_exists())) {
+										$re_tables[] = $table;
+									}
+								} else {
+									$re_tables[] = $table;
+								}
+							}
+							$this->options['tables'] = $re_tables;
+							update_option(self::DOMAIN, $this->options);
+						}
+						$this->current_table = $prev_current_table;
+						$msg[1] .= "\n " . __('And the cleaning of the table settings done.', self::DOMAIN);
+					}
+				} else {
+					$msg = array('warning', __('Failed to save option setting. Please note it is not saved if there is no change.', self::DOMAIN));
 				}
 			}
 			break;
 		case 'create': 
 			if ($handle == 'create-table') {
-				if ($section == 'confirm') {
-					$create_full_table_name = null;
-					if (cdbt_compare_var(empty($inherit_values['naked_table_name']), true)) {
-						$msg = array('warning', __('Table name is empty.', self::DOMAIN));
-					} else {
-						$create_full_table_name = (cdbt_get_boolean($inherit_values['use_wp_prefix_for_newtable']) ? $wpdb->prefix : '') . trim($inherit_values['naked_table_name']);
-					}
-					if (cdbt_compare_var(empty($create_full_table_name), true)) {
-						$msg = array('warning', __('Table name is empty.', self::DOMAIN));
-					} else {
-						if (preg_match('/^([a-zA-Z0-9_\-]+)$/', $inherit_values['naked_table_name'], $matches)) {
-							if ($this->compare_reservation_tables($matches[1])) {
-								$msg = array('warning', __('Table name is invalid. Table name is not allowed that use reserved name on WordPress.', self::DOMAIN));
-							}
-							if ($create_full_table_name == $wpdb->prefix) {
-								$msg = array('warning', __('Table name is invalid. Table name of the only prefix is not allowed.', self::DOMAIN));
-							}
-							if (strlen($create_full_table_name) > 64) {
-								$msg = array('warning', __('Table name is invalid. Maximum string length of the table name is 64 bytes.', self::DOMAIN));
-							}
-							if (intval($create_full_table_name) > 0) {
-								$msg = array('warning', __('Table name is invalid. Table name cannot named in only numbers.', self::DOMAIN));
-							}
-							foreach ($this->options['tables'] as $table) {
-								if (cdbt_compare_var($create_full_table_name, $table['table_name'])) {
-									$msg = array('warning', __('This table is already created.', self::DOMAIN));
-									break;
+				if (cdbt_get_boolean($inherit_values['is_incorporate_table'])) {
+					$incorporate_table_name = $inherit_values['incorporate_table'];
+					if ($section == 'confirm') {
+						if (cdbt_compare_var(empty($inherit_values['show_max_records']), true)) {
+							$msg = array('warning', __('Show Max Records is empty.', self::DOMAIN));
+						} else if (intval($inherit_values['show_max_records']) == 0) {
+							$msg = array('warning', __('Show Max Records must be one more integer.', self::DOMAIN));
+						}
+						if (cdbt_compare_var(empty($inherit_values['view_role']), true) || intval($inherit_values['view_role']) < 1 || intval($inherit_values['view_role']) > 9) 
+							$inherit_values['view_role'] = '1';
+						if (cdbt_compare_var(empty($inherit_values['input_role']), true) || intval($inherit_values['input_role']) < 1 || intval($inherit_values['input_role']) > 9) 
+							$inherit_values['input_role'] = '5';
+						if (cdbt_compare_var(empty($inherit_values['edit_role']), true) || intval($inherit_values['edit_role']) < 1 || intval($inherit_values['edit_role']) > 9) 
+							$inherit_values['edit_role'] = '7';
+						if (cdbt_compare_var(empty($inherit_values['admin_role']), true) || intval($inherit_values['admin_role']) < 1 || intval($inherit_values['admin_role']) > 9) 
+							$inherit_values['admin_role'] = '9';
+						if (empty($msg)) {
+							$section = 'run';
+							$incorporate_table = $incorporate_table_name;
+							$msg = array('confirmation', sprintf(__('Will incorporate a "%s" table. Would you like?', self::DOMAIN), $incorporate_table_name), __('Yes, resume.', self::DOMAIN));
+						}
+					} else if ($section == 'run') {
+						$prev_current_table = $this->current_table;
+						$this->current_table = trim($inherit_values['incorporate_table']);
+						if ($this->check_table_exists()) {
+							
+							list($result, $create_table_sql) = $this->get_create_table_sql();
+							if ($result) {
+								if (preg_match('/\sENGINE=(.*)\s/iU', $create_table_sql, $matches)) {
+									$db_engine = $matches[1];
 								}
+								$new_table = array(
+									'table_name' => $this->current_table, 
+									'table_type' => 'enable_table', 
+									'sql' => $create_table_sql, 
+									'db_engine' => $db_engine, 
+									'show_max_records' => intval($inherit_values['show_max_records']), 
+									'roles' => array(
+										'view_role' => $inherit_values['view_role'], 
+										'input_role' => $inherit_values['input_role'], 
+										'edit_role' => $inherit_values['edit_role'], 
+										'admin_role' => $inherit_values['admin_role'], 
+									), 
+									'display_format' => array(
+										// {column_name} => array('(require|optional)', '(show|hide|none)', '{display_item_name}', '{default_value}', '(string|integer|float|date|binary)')
+										'ID' => array('require', 'none', '', '', 'integer'), 
+										'created' => array('require', 'none', '', '', 'date'), 
+										'updated' => array('require', 'none', '', '', 'date'), 
+									),
+								);
+								$table_list = $this->get_table_list('enable');
+								if ($table_list && !in_array($this->current_table, $table_list)) {
+									$this->options['tables'][] = $new_table;
+									if (update_option(self::DOMAIN, $this->options)) {
+										$msg = array('success', __('Have been completed that resume the setting as manageable table in this plugin.', self::DOMAIN));
+										$inherit_values = array();
+									} else {
+										$msg = array('warning', __('Failed to save option setting. Please note it is not saved if there is no change.', self::DOMAIN));
+									}
+								}
+							} else {
+								$msg = array('warning', __('Could not get the sql to create this table.', self::DOMAIN));
 							}
 						} else {
-							$msg = array('warning', __('Table name is invalid. Characters that can not be used in table name is included.', self::DOMAIN));
+							$msg = array('warning', __('This table is not exists.', self::DOMAIN));
 						}
-						if (empty($msg)) {
-							if (cdbt_compare_var(empty($inherit_values['create_table_sql']), true)) {
-								$msg = array('warning', __('Create Table SQL is empty.', self::DOMAIN));
-							} else {
-								$sql_str = stripcslashes(strip_tags($inherit_values['create_table_sql']));
-								list($result, $fixed_sql) = $this->validate_create_sql($create_full_table_name, $sql_str);
-								if ($result) {
-									// sql validate done
-									$esc_table_comment = stripcslashes(strip_tags($inherit_values['table_comment']));
-									$fixed_sql = sprintf($fixed_sql, $inherit_values['db_engine'], $this->options['charset'], $esc_table_comment);
-									$inherit_values['substance_sql'] = rawurlencode($fixed_sql);
-								} else {
-									$msg = array('warning', __('Create Table SQL is invalid.', self::DOMAIN));
+						$incorporate_table = '';
+						$is_incorporate_table = false;
+						$this->current_table = $prev_current_table;
+					} else {
+						$msg = array('warning', __('Is invalid call to incorporate table.', self::DOMAIN));
+					}
+				} else {
+					if ($section == 'confirm') {
+						$create_full_table_name = null;
+						if (cdbt_compare_var(empty($inherit_values['naked_table_name']), true)) {
+							$msg = array('warning', __('Table name is empty.', self::DOMAIN));
+						} else {
+							$create_full_table_name = (cdbt_get_boolean($inherit_values['use_wp_prefix_for_newtable']) ? $wpdb->prefix : '') . trim($inherit_values['naked_table_name']);
+						}
+						if (cdbt_compare_var(empty($create_full_table_name), true)) {
+							$msg = array('warning', __('Table name is empty.', self::DOMAIN));
+						} else {
+							if (preg_match('/^([a-zA-Z0-9_\-]+)$/', $inherit_values['naked_table_name'], $matches)) {
+								if ($this->compare_reservation_tables($matches[1])) {
+									$msg = array('warning', __('Table name is invalid. Table name is not allowed that use reserved name on WordPress.', self::DOMAIN));
 								}
+								if ($create_full_table_name == $wpdb->prefix) {
+									$msg = array('warning', __('Table name is invalid. Table name of the only prefix is not allowed.', self::DOMAIN));
+								}
+								if (strlen($create_full_table_name) > 64) {
+									$msg = array('warning', __('Table name is invalid. Maximum string length of the table name is 64 bytes.', self::DOMAIN));
+								}
+								if (intval($create_full_table_name) > 0) {
+									$msg = array('warning', __('Table name is invalid. Table name cannot named in only numbers.', self::DOMAIN));
+								}
+								foreach ($this->options['tables'] as $table) {
+									if (cdbt_compare_var($create_full_table_name, $table['table_name'])) {
+										$msg = array('warning', __('This table is already created.', self::DOMAIN));
+										break;
+									}
+								}
+							} else {
+								$msg = array('warning', __('Table name is invalid. Characters that can not be used in table name is included.', self::DOMAIN));
 							}
 							if (empty($msg)) {
-								if (cdbt_compare_var(empty($inherit_values['show_max_records']), true)) {
-									$msg = array('warning', __('Show Max Records is empty.', self::DOMAIN));
-								} else if (intval($inherit_values['show_max_records']) == 0) {
-									$msg = array('warning', __('Show Max Records must be one more integer.', self::DOMAIN));
+								if (cdbt_compare_var(empty($inherit_values['create_table_sql']), true)) {
+									$msg = array('warning', __('Create Table SQL is empty.', self::DOMAIN));
+								} else {
+									$sql_str = stripcslashes(strip_tags($inherit_values['create_table_sql']));
+									list($result, $fixed_sql) = $this->validate_create_sql($create_full_table_name, $sql_str);
+									if ($result) {
+										// sql validate done
+										$esc_table_comment = stripcslashes(strip_tags($inherit_values['table_comment']));
+										$fixed_sql = sprintf($fixed_sql, $inherit_values['db_engine'], $this->options['charset'], $esc_table_comment);
+										$inherit_values['substance_sql'] = rawurlencode($fixed_sql);
+									} else {
+										$msg = array('warning', __('Create Table SQL is invalid.', self::DOMAIN));
+									}
 								}
-								if (cdbt_compare_var(empty($inherit_values['view_role']), true) || intval($inherit_values['view_role']) < 1 || intval($inherit_values['view_role']) > 9) 
-									$inherit_values['view_role'] = '1';
-								if (cdbt_compare_var(empty($inherit_values['input_role']), true) || intval($inherit_values['input_role']) < 1 || intval($inherit_values['input_role']) > 9) 
-									$inherit_values['input_role'] = '5';
-								if (cdbt_compare_var(empty($inherit_values['edit_role']), true) || intval($inherit_values['edit_role']) < 1 || intval($inherit_values['edit_role']) > 9) 
-									$inherit_values['edit_role'] = '7';
-								if (cdbt_compare_var(empty($inherit_values['admin_role']), true) || intval($inherit_values['admin_role']) < 1 || intval($inherit_values['admin_role']) > 9) 
-									$inherit_values['admin_role'] = '9';
 								if (empty($msg)) {
-									$section = 'run';
-									$msg = array('confirmation', '{#code class="confirm-sql"#}'. $fixed_sql .'{#/code#}' . sprintf(__('Will create a "%s" table. Would you like?', self::DOMAIN), $create_full_table_name), __('Yes, create.', self::DOMAIN), 'set_substance_sql');
+									if (cdbt_compare_var(empty($inherit_values['show_max_records']), true)) {
+										$msg = array('warning', __('Show Max Records is empty.', self::DOMAIN));
+									} else if (intval($inherit_values['show_max_records']) == 0) {
+										$msg = array('warning', __('Show Max Records must be one more integer.', self::DOMAIN));
+									}
+									if (cdbt_compare_var(empty($inherit_values['view_role']), true) || intval($inherit_values['view_role']) < 1 || intval($inherit_values['view_role']) > 9) 
+										$inherit_values['view_role'] = '1';
+									if (cdbt_compare_var(empty($inherit_values['input_role']), true) || intval($inherit_values['input_role']) < 1 || intval($inherit_values['input_role']) > 9) 
+										$inherit_values['input_role'] = '5';
+									if (cdbt_compare_var(empty($inherit_values['edit_role']), true) || intval($inherit_values['edit_role']) < 1 || intval($inherit_values['edit_role']) > 9) 
+										$inherit_values['edit_role'] = '7';
+									if (cdbt_compare_var(empty($inherit_values['admin_role']), true) || intval($inherit_values['admin_role']) < 1 || intval($inherit_values['admin_role']) > 9) 
+										$inherit_values['admin_role'] = '9';
+									if (empty($msg)) {
+										$section = 'run';
+										$msg = array('confirmation', '{#code class="confirm-sql"#}'. $fixed_sql .'{#/code#}' . sprintf(__('Will create a "%s" table. Would you like?', self::DOMAIN), $create_full_table_name), __('Yes, create.', self::DOMAIN), 'set_substance_sql');
+									}
 								}
 							}
 						}
-					}
-				} else if ($section == 'run') {
-					$prev_current_table = $this->current_table;
-					$this->current_table = (cdbt_get_boolean($inherit_values['use_wp_prefix_for_newtable']) ? $wpdb->prefix : '') . trim($inherit_values['naked_table_name']);
-					if (!$this->check_table_exists()) {
-						$create_table_sql = rawurldecode($inherit_values['substance_sql']);
-						$new_table = array(
-							'table_name' => $this->current_table, 
-							'table_type' => 'enable_table', 
-							'sql' => $create_table_sql, 
-							'db_engine' => $inherit_values['db_engine'], 
-							'show_max_records' => intval($inherit_values['show_max_records']), 
-							'roles' => array(
-								'view_role' => $inherit_values['view_role'], 
-								'input_role' => $inherit_values['input_role'], 
-								'edit_role' => $inherit_values['edit_role'], 
-								'admin_role' => $inherit_values['admin_role'], 
-							), 
-							'display_format' => array(
-								// {column_name} => array('(require|optional)', '(show|hide|none)', '{display_item_name}', '{default_value}', '(string|integer|float|date|binary)')
-								'ID' => array('require', 'none', '', '', 'integer'), 
-								'created' => array('require', 'none', '', '', 'date'), 
-								'updated' => array('require', 'none', '', '', 'date'), 
-							),
-						);
-						list($result, $message) = $this->create_table($new_table);
-						if ($result) {
-							list(,$new_table['sql']) = $this->get_create_table_sql();
-							$this->options['tables'][] = $new_table;
-							if (update_option(self::DOMAIN, $this->options)) {
-								$msg = array('success', $message);
-								$inherit_values = array();
+					} else if ($section == 'run') {
+						$prev_current_table = $this->current_table;
+						$this->current_table = (cdbt_get_boolean($inherit_values['use_wp_prefix_for_newtable']) ? $wpdb->prefix : '') . trim($inherit_values['naked_table_name']);
+						if (!$this->check_table_exists()) {
+							$create_table_sql = rawurldecode($inherit_values['substance_sql']);
+							$new_table = array(
+								'table_name' => $this->current_table, 
+								'table_type' => 'enable_table', 
+								'sql' => $create_table_sql, 
+								'db_engine' => $inherit_values['db_engine'], 
+								'show_max_records' => intval($inherit_values['show_max_records']), 
+								'roles' => array(
+									'view_role' => $inherit_values['view_role'], 
+									'input_role' => $inherit_values['input_role'], 
+									'edit_role' => $inherit_values['edit_role'], 
+									'admin_role' => $inherit_values['admin_role'], 
+								), 
+								'display_format' => array(
+									// {column_name} => array('(require|optional)', '(show|hide|none)', '{display_item_name}', '{default_value}', '(string|integer|float|date|binary)')
+									'ID' => array('require', 'none', '', '', 'integer'), 
+									'created' => array('require', 'none', '', '', 'date'), 
+									'updated' => array('require', 'none', '', '', 'date'), 
+								),
+							);
+							list($result, $message) = $this->create_table($new_table);
+							if ($result) {
+								list(,$new_table['sql']) = $this->get_create_table_sql();
+								$this->options['tables'][] = $new_table;
+								if (update_option(self::DOMAIN, $this->options)) {
+									$msg = array('success', $message);
+									$inherit_values = array();
+								} else {
+									$msg = array('warning', __('Failed to save option setting. Please note it is not saved if there is no change.', self::DOMAIN));
+								}
 							} else {
-								$msg = array('warning', __('Failed to save option setting. Please note it is not saved if there is no change.', self::DOMAIN));
+								$msg = array('warning', $message);
 							}
 						} else {
-							$msg = array('warning', $message);
+							$msg = array('warning', __('This table is already created.', self::DOMAIN));
 						}
+						$this->current_table = $prev_current_table;
 					} else {
-						$msg = array('warning', __('This table is already created.', self::DOMAIN));
+						$msg = array('warning', __('Is invalid call to create table.', self::DOMAIN));
 					}
-					$this->current_table = $prev_current_table;
-				} else {
-					$msg = array('warning', __('Is invalid call to create table.', self::DOMAIN));
 				}
 			} else if ($handle == 'alter-table') {
 				if ($section == 'confirm') {
@@ -469,7 +584,7 @@ cdbt_create_console_footer(((!empty($msg) && $msg[0] != 'success') ? $informatio
 function cdbt_create_tab_content($tab_name, $nonce, $inherit_values=null) {
 	global $wpdb, $cdbt;
 	$cdbt_options = get_option(PLUGIN_SLUG);
-	$controller_table = $cdbt_options['tables'][0]['table_name'];
+	$controller_table = count($cdbt_options['tables']) > 0 ? $cdbt_options['tables'][0]['table_name'] : null;
 	$content_html = null;
 	$nonce_field = wp_nonce_field(PLUGIN_SLUG .'_admin', '_cdbt_token', true, false);
 	switch ($tab_name) {

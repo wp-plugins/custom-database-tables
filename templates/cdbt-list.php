@@ -57,11 +57,16 @@ if ($result && !empty($table_name) && !empty($table_schema)) {
 			// $order_by['name'] = 'ASC';
 			$data = $this->get_data($table_name, $view_cols, null, $order_by, $limit, $offset);
 			$total_data = $this->get_data($table_name, 'COUNT(*)');
-			foreach (array_shift($total_data) as $key => $val) {
-				if ($key == 'COUNT(*)') {
-					$total_data = intval($val);
-					break;
+			if (is_array($total_data) && !empty($total_data)) {
+				$total_data = array_shift($total_data);
+				foreach ($total_data as $key => $val) {
+					if ($key == 'COUNT(*)') {
+						$total_data = intval($val);
+						break;
+					}
 				}
+			} else {
+				$total_data = 0;
 			}
 		}
 		$is_controller = true;
@@ -101,7 +106,7 @@ NAV;
 			$controller_block = null;
 		}
 		
-		if (!empty($data)) {
+		if (!empty($data) && is_array($data)) {
 			$list_num = 1 + (($page_num - 1) * $per_page);
 			foreach ($data as $record) {
 				if ($list_num == (1 + (($page_num - 1) * $per_page))) {

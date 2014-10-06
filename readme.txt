@@ -1,14 +1,14 @@
 === Plugin Name ===
 Contributors: ka2
 Donate link: https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=2YZY4HWYSWEWG&lc=en_US&currency_code=USD&item_name=
-Tags: custom database tables, CDBT, MySQL, database, table, create, delete, insert, update, edit, truncate, drop
+Tags: custom database tables, MySQL, database, table, create, delete, select, insert, update, truncate, drop, alter table, import, export, CSV
 Requires at least: 3.6
 Tested up to: 4.0.0
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
-Custom DataBase Tables plug-in allows you to perform data storage and reference by creating a free tables in database of WordPress.
+Custom DataBase Tables plugin allows you to perform data storage and reference by creating a free tables in database of WordPress.
 
 == Description ==
 
@@ -62,6 +62,14 @@ There is no particular restriction on the amount of data that is stored in a tab
 13. You can modify table as add an index or column in the table, and delete or change. As you can be done that easily by using various presets.
 
 == Changelog ==
+
+= 1.1.4 =
+* Added the ability to sort the column for each data list when editing and viewing data (also possible ON / OFF in shortcodes).
+* Improved bad usability that pagination is bloated when there is a large amount of data.
+* Improved the user experience of each page of the data registration, viewing, and edit.
+* Fixed a bug that causes an error when you enter zero for the column of floating point data type when registering.
+* Fixed a bug in the search function of the page of the viewing and editing of data.
+* Modal window within the content that is output in the shortcode, has solved the problem that can not be manipulated by the theme you want to use.
 
 = 1.1.3 =
 * Was extended to allow updating of the table structure using presets.

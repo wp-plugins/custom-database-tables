@@ -4,7 +4,7 @@ Donate link: https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=2YZY4
 Tags: custom database tables, MySQL, database, table, create, delete, select, insert, update, truncate, drop, alter table, import, export, CSV
 Requires at least: 3.6
 Tested up to: 4.0.0
-Stable tag: 1.1.5
+Stable tag: 1.1.6
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -62,6 +62,14 @@ There is no particular restriction on the amount of data that is stored in a tab
 13. You can modify table as add an index or column in the table, and delete or change. As you can be done that easily by using various presets.
 
 == Changelog ==
+
+= 1.1.6 =
+* Changed the reading position of the plugins dedicated inline JavaScript in management page.
+* Newly added the API function that outputs the search result of table data in JSON and JSONP format.
+* Added the ability to access the managable tables under the plugin from an external site by using generated API key.
+* Extended the mime-type of importable CSV file: "application/vnd.ms-excel", "application/octet-stream", "text/plain", "text/csv", "text/tsv"
+* Updated methods (delete_data, find_data, insert_data, update_data).
+* Added a registration datetime (column named "created") in the target columns when editing table data.
 
 = 1.1.5 =
 * Fixed a bug that resume of external table does not work if the table that you created in plugins have none.

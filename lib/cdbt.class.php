@@ -117,6 +117,20 @@ class CustomDatabaseTables {
 				$this->activate();
 			}
 		}
+		if ($this->options['db_version'] != $this->db_version) {
+			if (version_compare($this->db_version, $this->options['db_version']) > 0) {
+				$this->activate();
+			}
+		}
+		
+		if (isset($this->options['api_key'])) {
+			add_filter('rewrite_rules_array', array($this, 'insert_rewrite_rules'));
+			add_filter('query_vars', array($this, 'insert_query_vars'));
+			add_action('wp_loaded', array($this, 'flush_rules'));
+			if (!empty($this->options['api_key'])) {
+				add_action('send_headers', array($this, 'allow_host'));
+			}
+		}
 		
 		$this->current_table = get_option(self::DOMAIN . '_current_table', '');
 		
@@ -125,6 +139,7 @@ class CustomDatabaseTables {
 		
 		add_filter('plugin_action_links', array($this, 'add_action_links'), 10, 2);
 		add_action('admin_menu', array($this, 'create_admin'));
+		add_action('pre_get_posts', array($this, 'receive_api_request'));
 	}
 	
 	/**
@@ -167,6 +182,7 @@ class CustomDatabaseTables {
 			'cleaning_options' => true, 
 			'uninstall_options' => false, 
 			'resume_options' => false, 
+			'api_key' => array(),
 			'tables' => array(
 				array(
 					'table_name' => 'cdbt_schema_template', 
@@ -269,10 +285,11 @@ class CustomDatabaseTables {
 	 * @return void
 	 */
 	function create_admin(){
-		add_options_page(__('Custom Database Tables Option: ', self::DOMAIN), __('Custom Database Tables', self::DOMAIN), 'manage_options', self::DOMAIN, array($this, 'admin_controller'), plugin_dir_url(__FILE__) . 'assets/img/undo.png');
+		$cdbt_plugin_page = add_options_page(__('Custom Database Tables Option: ', self::DOMAIN), __('Custom Database Tables', self::DOMAIN), 'manage_options', self::DOMAIN, array($this, 'admin_controller'), plugin_dir_url(__FILE__) . 'assets/img/undo.png');
 		wp_parse_str($_SERVER['QUERY_STRING'], $this->query);
-		//add_action('admin_init', array($this, 'admin_header'));
-		add_action('admin_enqueue_scripts', array($this, 'admin_assets'));
+		add_action("admin_head-$cdbt_plugin_page", array($this, 'admin_header'));
+		add_action("load-$cdbt_plugin_page", array($this, 'admin_assets'));
+		add_action("admin_footer-$cdbt_plugin_page", array($this, 'admin_footer'));
 		add_action('admin_notice', array($this, 'admin_notice'));
 	}
 	
@@ -300,11 +317,10 @@ class CustomDatabaseTables {
 				break;
 		}
 		require_once PLUGIN_TMPL_DIR . DS . $template_name;
-		cdbt_create_javascript();
 	}
 	
 	/**
-	 * load header for admin panel
+	 * load header for CDBT management console in admin panel
 	 * @return void
 	 */
 	function admin_header(){
@@ -314,28 +330,58 @@ class CustomDatabaseTables {
 	}
 	
 	/**
-	 * load assets for admin panel
+	 * load assets for CDBT management console in admin panel
 	 * @return void
 	 */
 	function admin_assets(){
+		if (!is_admin()) 
+			return;
 		if (array_key_exists('page', $this->query) && $this->query['page'] == self::DOMAIN) {
-			if (is_admin()) {
-			wp_enqueue_style('cdbt-common-style', $this->dir_url . '/assets/css/cdbt-main.min.css', array(), $this->version, 'all');
-			wp_enqueue_style('cdbt-admin-style', $this->dir_url . '/assets/css/cdbt-admin.css', true, $this->version, 'all');
-			wp_register_script('cdbt-common-script', $this->dir_url . '/assets/js/scripts.min.js');
-			wp_enqueue_script('jquery-ui-core');
-			wp_enqueue_script('jquery-ui-widget');
-			wp_enqueue_script('jquery-ui-mouse');
-			wp_enqueue_script('jquery-ui-position');
-			wp_enqueue_script('jquery-ui-sortable');
-			wp_enqueue_script('jquery-ui-autocomplete');
-			wp_enqueue_script('cdbt-common-script');
+			$cdbt_admin_assets = array(
+				'styles' => array(
+					'cdbt-common-style' => array( $this->dir_url . '/assets/css/cdbt-main.min.css', array(), $this->version, 'all' ), 
+					'cdbt-admin-style' => array( $this->dir_url . '/assets/css/cdbt-admin.css', true, $this->version, 'all' ), 
+				), 
+				'scripts' => array(
+					'cdbt-common-script' => array( $this->dir_url . '/assets/js/scripts.min.js', array(), null, false ), 
+					'jquery-ui-core' => null, 
+					'jquery-ui-widget' => null, 
+					'jquery-ui-mouse' => null, 
+					'jquery-ui-position' => null, 
+					'jquery-ui-sortable' => null, 
+					'jquery-ui-autocomplete' => null, 
+				)
+			);
+			foreach ($cdbt_admin_assets as $asset_type => $asset_instance) {
+				if ($asset_type == 'styles') {
+					foreach ($asset_instance as $asset_name => $asset_values) {
+						wp_enqueue_style($asset_name, $asset_values[0], $asset_values[1], $asset_values[2], $asset_values[3]);
+					}
+				}
+				if ($asset_type == 'scripts') {
+					foreach ($asset_instance as $asset_name => $asset_values) {
+						if (!empty($asset_values)) {
+							wp_register_script($asset_name, $asset_values[0], $asset_values[1], $asset_values[2], $asset_values[3]);
+						}
+						wp_enqueue_script($asset_name);
+					}
+				}
 			}
 		}
 	}
 	
 	/**
-	 * show notice on admin panel
+	 * load footer for CDBT management console in admin panel
+	 * @return void
+	 */
+	function admin_footer(){
+		if (array_key_exists('page', $this->query) && $this->query['page'] == self::DOMAIN) {
+			cdbt_create_javascript();
+		}
+	}
+	
+	/**
+	 * show notice on CDBT management console in admin panel
 	 * @return void
 	 */
 	function admin_notice(){
@@ -356,6 +402,259 @@ class CustomDatabaseTables {
 				printf($notice_base, 'updated', $notice_list);
 			}
 		}
+	}
+	
+	/**
+	 * create api key for remote address
+	 * @param string $remote_addr (optional) default null eq. $_SERVER['REMOTE_ADDR']
+	 * @return string $api_key
+	 */
+	function generate_api_key($remote_addr=''){
+		if (!defined(DB_NAME)) {
+			$base_salt = md5(self::DOMAIN . DB_NAME . $_SERVER['SERVER_ADDR'] . (!empty($remote_addr) ? $remote_addr : $_SERVER['SERVER_PORT']) . uniqid());
+			$base_salt = str_split(strtoupper($base_salt), strlen($base_salt)/4);
+			$api_key = implode('-', $base_salt);
+		} else {
+			$api_key = '';
+		}
+		return $api_key;
+	}
+	
+	/**
+	 * verify api key
+	 * @param string $api_key
+	 * @return void
+	 */
+	function verify_api_key($api_key){
+		if (isset($api_key) && !empty($api_key)) {
+			$result = false;
+			if (isset($this->options['api_key']) && !empty($this->options['api_key']) && is_array($this->options['api_key']) && count($this->options['api_key']) > 0) {
+				if (isset($_SERVER['HTTP_ORIGIN']) && !empty($_SERVER['HTTP_ORIGIN'])) {
+					$client_host = preg_replace('/^(http|https|ftp):\/\/(.*)/iU', '$2', $_SERVER['HTTP_ORIGIN']);
+				} elseif (isset($_SERVER['HTTP_REFERER']) && !empty($_SERVER['HTTP_REFERER'])) {
+					$client_host = preg_replace('/^(http|https|ftp):\/\/(.*)(\/|\?|:).*$/iU', '$2', $_SERVER['HTTP_REFERER']);
+				} elseif (isset($_SERVER['REMOTE_HOST']) && !empty($_SERVER['REMOTE_HOST'])) {
+					$client_host = $_SERVER['REMOTE_HOST'];
+				} elseif (isset($_SERVER['REMOTE_ADDR']) && !empty($_SERVER['REMOTE_ADDR'])) {
+					$client_host = gethostbyaddr($_SERVER['REMOTE_ADDR']);
+				} else {
+					$client_host = '';
+				}
+				if (!empty($client_host)) {
+					list($client_addr, ) = gethostbynamel($client_host);
+				} else {
+					$client_addr = $_SERVER['SERVER_ADDR'];
+				}
+				foreach ($this->options['api_key'] as $host_addr => $regist_api_key) {
+					if (cdbt_compare_var($api_key, $regist_api_key)) {
+						if (cdbt_compare_var($client_host, $host_addr)) {
+							$result = true;
+						} elseif (cdbt_compare_var($client_addr, $host_addr)) {
+							$result = true;
+						}
+						if ($result) {
+							break;
+						}
+					}
+				}
+			}
+		} else {
+			$result = false;
+		}
+		return $result;
+	}
+	
+	/**
+	 * flush_rules() if extend rules are not yet included
+	 */
+	function flush_rules() {
+		$rules = get_option('rewrite_rules');
+		if (!isset($rules['^cdbt_api/([^/]*)/([^/]*)/([^/]*)?$'])) {
+			global $wp_rewrite;
+			$wp_rewrite->flush_rules();
+		}
+	}
+	
+	/**
+	 * Adding a extend rule for requesting api
+	 */
+	function insert_rewrite_rules($rules) {
+		$newrules = array();
+		$newrules['^cdbt_api/([^/]*)/([^/]*)/([^/]*)?$'] = 'index.php?cdbt_api_key=$matches[1]&cdbt_table=$matches[2]&cdbt_api_request=$matches[3]';
+		return $newrules + $rules;
+	}
+	
+	/**
+	 * Adding the vars of requesting api so that WP recognizes it
+	 */
+	function insert_query_vars($vars) {
+		array_push($vars, 'cdbt_api_key', 'cdbt_table', 'cdbt_api_request');
+		return $vars;
+	}
+	
+	/**
+	 * Enable HTTP access control (CORS)
+	 */
+	function allow_host() {
+		header("Access-Control-Allow-Origin: *");
+		header("Access-Control-Allow-Methods: POST, GET");
+		header("Access-Control-Max-Age: 86400");
+	}
+	
+	/**
+	 * controller process when receive the api request
+	 * @param string $wp_query
+	 * @return void
+	 */
+	function receive_api_request($wp_query){
+		if (is_admin()) 
+			return;
+		if (isset($wp_query->query['cdbt_api_key']) && !empty($wp_query->query['cdbt_api_key'])) {
+			$request_uri = $_SERVER['REQUEST_URI'];
+			$request_date = date('c', $_SERVER['REQUEST_TIME']);
+			if ($this->verify_api_key(trim($wp_query->query['cdbt_api_key']))) {
+				$target_table = (isset($wp_query->query['cdbt_table']) && !empty($wp_query->query['cdbt_table'])) ? trim($wp_query->query['cdbt_table']) : '';
+				$request = (isset($wp_query->query['cdbt_api_request']) && !empty($wp_query->query['cdbt_api_request'])) ? trim($wp_query->query['cdbt_api_request']) : '';
+				if (!empty($target_table) && !empty($request)) {
+					if ($this->check_table_exists($target_table)) {
+						// 200: Successful
+						$response = array('success' => array('code' => 200, 'table' => $target_table, 'request' => $request, 'request_uri' => $request_uri, 'request_date' => $request_date));
+						switch($request) {
+							case 'get_data': 
+								$allow_args = array('columns' => 'mixed', 'conditions' => 'hash', 'order' => 'hash', 'limit' => 'int', 'offset' => 'int');
+								$response['data'] = $this->api_method_wrapper($target_table, $request, $allow_args);
+								break;
+							case 'find_data': 
+								$allow_args = array('search_key' => 'string', 'columns' => 'mixed', 'order' => 'hash', 'limit' => 'int', 'offset' => 'int');
+								$response['data'] = $this->api_method_wrapper($target_table, $request, $allow_args);
+								break;
+							case 'insert_data': 
+								$allow_args = array('data' => 'hash');
+								$response['data'] = $this->api_method_wrapper($target_table, $request, $allow_args);
+								break;
+							case 'update_data': 
+								$allow_args = array('primary_key_value' => 'int', 'data' => 'hash');
+								$response['data'] = $this->api_method_wrapper($target_table, $request, $allow_args);
+								break;
+							case 'delete_data': 
+								$allow_args = array('primary_key_value' => 'int');
+								$response['data'] = $this->api_method_wrapper($target_table, $request, $allow_args);
+								break;
+							default: 
+								$response = array('error' => array('code' => 400, 'desc' => 'Invalid Request', 'request_uri' => $request_uri, 'request_date' => $request_date));
+								break;
+						}
+					} else {
+						$response = array('error' => array('code' => 400, 'desc' => 'Invalid Request', 'request_uri' => $request_uri, 'request_date' => $request_date));
+					}
+				} else {
+					// 400: Invalid API request
+					$response = array('error' => array('code' => 400, 'desc' => 'Invalid Request', 'request_uri' => $request_uri, 'request_date' => $request_date));
+				}
+			} else {
+				// 401: Authentication failure
+				$response = array('error' => array('code' => 401, 'desc' => 'Authentication Failure', 'request_uri' => $request_uri, 'request_date' => $request_date));
+			}
+			$is_crossdomain = (isset($_REQUEST['callback']) && !empty($_REQUEST['callback'])) ? trim($_REQUEST['callback']) : false;
+			header( 'Content-Type: text/javascript; charset=utf-8' );
+			if ($is_crossdomain) {
+				$response = $is_crossdomain . '(' . json_encode($response) . ')';
+			} else {
+				$response = json_encode($response);
+			}
+			// Currently, logging of API request is not implemented yet.
+			die($response);
+			exit;
+		} else {
+			// 403: Invalid access
+			// $response = array('error' => array('code' => 403, 'desc' => 'Invalid Access'));
+			header("HTTP/1.1 404 Not Found", false, 404);
+		}
+	}
+	
+	/**
+	 * Wrapper for executing core methods from requested API
+	 * @param string $target_table
+	 * @param string $request eq. name of this CRUD mothods
+	 * @param array $allow_args
+	 * @return mixed
+	 */
+	function api_method_wrapper($target_table, $request, $allow_args) {
+		foreach ($allow_args as $var_name => $val_type) {
+			${$var_name} = (isset($_REQUEST[$var_name]) && !empty($_REQUEST[$var_name])) ? trim($_REQUEST[$var_name]) : null;
+			if (!empty(${$var_name})) {
+				if ($val_type == 'mixed') {
+					if (preg_match('/^\{(.*)\}$/U', ${$var_name}, $matches)) {
+						$tmp = explode(',', $matches[1]);
+						$tmp_ary = array();
+						foreach ($tmp as $line_str) {
+							list($column_name, $column_value) = explode(':', trim($line_str));
+							$column_name = trim(trim(stripcslashes($column_name)), "\"' ");
+							$column_value = trim(trim(stripcslashes($column_value)), "\"' ");
+							if (!empty($column_name)) 
+								$tmp_ary[$column_name] = empty($column_value) ? 'NULL' : $column_value;
+						}
+						${$var_name} = $tmp_ary;
+					} elseif (preg_match('/^\[(.*)\]$/U', ${$var_name}, $matches)) {
+						$tmp = explode(',', $matches[1]);
+						$tmp_ary = array();
+						foreach ($tmp as $line_str) {
+							$tmp_ary[] = trim(trim(stripcslashes($line_str)), "\"' ");
+						}
+						${$var_name} = $tmp_ary;
+					}
+				} elseif ($val_type == 'array') {
+					if (preg_match('/^\[(.*)\]$/U', ${$var_name}, $matches)) {
+						$tmp = explode(',', $matches[1]);
+						$tmp_ary = array();
+						foreach ($tmp as $line_str) {
+							$tmp_ary[] = trim(trim(stripcslashes($line_str)), "\"' ");
+						}
+						${$var_name} = $tmp_ary;
+					} else {
+						${$var_name} = null;
+					}
+				} elseif ($val_type == 'hash') {
+					if (preg_match('/^\{(.*)\}$/U', ${$var_name}, $matches)) {
+						$tmp = explode(',', $matches[1]);
+						$tmp_ary = array();
+						foreach ($tmp as $line_str) {
+							list($column_name, $column_value) = explode(':', trim($line_str));
+							$column_name = trim(trim(stripcslashes($column_name)), "\"' ");
+							$column_value = trim(trim(stripcslashes($column_value)), "\"' ");
+							if (!empty($column_name)) 
+								$tmp_ary[$column_name] = empty($column_value) ? 'NULL' : $column_value;
+						}
+						${$var_name} = $tmp_ary;
+					} else {
+						${$var_name} = null;
+					}
+				} elseif ($val_type == 'int') {
+					${$var_name} = intval($_REQUEST[$var_name]);
+				}
+			}
+		}
+		switch($request) {
+			case 'get_data': 
+				$result = $this->get_data($target_table, $columns, $conditions, $order, $limit, $offset);
+				break;
+			case 'find_data': 
+				$result = $this->find_data($target_table, null, $search_key, $columns, $order, $limit, $offset);
+				break;
+			case 'insert_data': 
+				$result = $this->insert_data($target_table, $data, null);
+				break;
+			case 'update_data': 
+				$result = $this->update_data($target_table, $primary_key_value, $data, null);
+				break;
+			case 'delete_data': 
+				$result = $this->delete_data($target_table, $primary_key_value);
+				break;
+			default: 
+				$result = false;
+				break;
+		}
+		return $result;
 	}
 	
 // //////////////////// following CRUD //////////////////////////////////////////////////
@@ -650,10 +949,19 @@ class CustomDatabaseTables {
 		$search_key = preg_replace('/[\s　]+/u', ' ', trim($search_key), -1);
 		$keywords = preg_split('/[\s]/', $search_key, 0, PREG_SPLIT_NO_EMPTY);
 		if (!empty($keywords)) {
+			if (empty($table_schema)) 
+				list(, , $table_schema) = $this->get_table_schema($table_name);
+			$primary_key_name = null;
+			foreach ($table_schema as $col_name => $col_scm) {
+				if (empty($primary_key_name) && $col_scm['primary_key']) {
+					$primary_key_name = $col_name;
+					break;
+				}
+			}
 			$union_clauses = array();
 			foreach ($keywords as $value) {
 				if (!empty($table_schema)) {
-					unset($table_schema['ID'], $table_schema['created'], $table_schema['updated']);
+					unset($table_schema[$primary_key_name], $table_schema['created'], $table_schema['updated']);
 					$target_columns = array();
 					foreach ($table_schema as $column_name => $column_info) {
 						if (is_float($value)) {
@@ -726,19 +1034,30 @@ class CustomDatabaseTables {
 	function insert_data($table_name, $data, $table_schema=null) {
 		global $wpdb;
 		if (empty($table_schema)) 
-			$table_schema = $this->get_table_schema($table_name);
-		$primary_key = null;
+			list(, , $table_schema) = $this->get_table_schema($table_name);
+		$primary_key_name = $primary_key_value = null;
+		$primary_key_count = 0;
 		$is_exists_created = $is_exists_updated = false;
 		foreach ($table_schema as $key => $val) {
-			if (empty($primary_key) && $val['primary_key']) 
-				$primary_key = $key;
+			if ($val['primary_key']) {
+				if (empty($primary_key_name)) {
+					$primary_key_name = $key;
+					$primary_key_a_i = strtolower($val['extra']) == 'auto_increment' ? true : false;
+				}
+				$primary_key_count++;
+			}
 			if ($key == 'created') 
 				$is_exists_created = true;
 			if ($key == 'updated') 
 				$is_exists_updated = true;
 		}
-		if (!empty($primary_key)) 
-			unset($data[$primary_key]);
+		if (!empty($primary_key_name)) {
+			if ($primary_key_a_i) {
+				unset($data[$primary_key_name]);
+			} else {
+				$primary_key_value = $data[$primary_key_name];
+			}
+		}
 		if ($is_exists_created) 
 			$data['created'] = date('Y-m-d H:i:s', time());
 		if ($is_exists_updated) 
@@ -746,10 +1065,10 @@ class CustomDatabaseTables {
 		$format = array();
 		foreach ($data as $column_name => $value) {
 			if (array_key_exists($column_name, $table_schema)) {
-				if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $table_schema[$column_name]['type']) && preg_match('/^\d+$/', $value)) {
+				if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $table_schema[$column_name]['type']) && preg_match('/^(\-|)[0-9]+$/', $value)) {
 					// is integer format
 					$format[] = '%d';
-				} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $table_schema[$column_name]['type']) && preg_match('/^\d+(.{,1}\d+)?$/', $value)) {
+				} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $table_schema[$column_name]['type']) && preg_match('/^(\-|)[0-9]+\.?[0-9]+$/', $value)) {
 					// is double format
 					$format[] = '%f';
 				} else {
@@ -763,7 +1082,11 @@ class CustomDatabaseTables {
 		} else {
 			$res = $wpdb->insert($table_name, $data);
 		}
-		return (!$res) ? $res : $wpdb->insert_id;
+		if ($primary_key_count == 1) {
+			return (!cdbt_get_boolean($res)) ? $res : $wpdb->insert_id;
+		} else if ($primary_key_count > 1) {
+			return $primary_key_value;
+		}
 	}
 	
 	/**
@@ -777,45 +1100,66 @@ class CustomDatabaseTables {
 	function update_data($table_name, $primary_key_value, $data, $table_schema=null) {
 		global $wpdb;
 		if (empty($table_schema)) 
-			$table_schema = $this->get_table_schema($table_name);
+			list(, , $table_schema) = $this->get_table_schema($table_name);
 		$primary_key_name = null;
+		$primary_key_count = 0;
 		$is_exists_created = $is_exists_updated = false;
 		foreach ($table_schema as $key => $val) {
-			if (empty($primary_key_name) && $val['primary_key']) 
-				$primary_key_name = $key;
+			if ($val['primary_key']) {
+				if (empty($primary_key_name)) {
+					$primary_key_name = $key;
+					$primary_key_a_i = strtolower($val['extra']) == 'auto_increment' ? true : false;
+					if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $val['type']) && preg_match('/^(\-|)[0-9]+$/', $primary_key_value)) {
+						$primary_key_value = intval($primary_key_value);
+						$primary_key_format = '%d';
+					} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $val['type']) && preg_match('/^(\-|)[0-9]+\.?[0-9]+$/', $primary_key_value)) {
+						$primary_key_value = floatval($primary_key_value);
+						$primary_key_format = '%f';
+					} else {
+						$primary_key_value = strval($primary_key_value);
+						$primary_key_format = '%s';
+					}
+				}
+				$primary_key_count++;
+			}
 			if ($key == 'created') 
 				$is_exists_created = true;
 			if ($key == 'updated') 
 				$is_exists_updated = true;
 		}
-		if (array_key_exists($primary_key_name, $data)) 
-			unset($data[$primary_key_name]);
-		if ($is_exists_created && array_key_exists('created', $data)) 
-			unset($data['created']);
-		if ($is_exists_updated && array_key_exists('updated', $data)) 
-			unset($data['updated']);
-		$format = array();
-		foreach ($data as $column_name => $value) {
-			if (array_key_exists($column_name, $table_schema)) {
-				if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $table_schema[$column_name]['type']) && preg_match('/^\d+$/', $value)) {
-					// is integer format
-					$data[$column_name] = (int)$value;
-					$format[] = '%d';
-				} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $table_schema[$column_name]['type']) && preg_match('/^\d+(.{,1}\d+)?$/', $value)) {
-					// is double format
-					$data[$column_name] = (float)$value;
-					$format[] = '%f';
-				} else {
-					// is string format
-					$data[$column_name] = (string)$value;
-					$format[] = '%s';
-				}
-				if (empty($value)) 
-					$value = null;
+		if (array_key_exists($primary_key_name, $data)) {
+			if ($primary_key_a_i) {
+				unset($data[$primary_key_name]);
 			}
 		}
-		if (intval($primary_key_value) > 0 && isset($format) && !empty($format) && count($data) == count($format)) {
-			$result = $wpdb->update($table_name, $data, array($primary_key_name => $primary_key_value), $format, array('%d'));
+		//if ($is_exists_created && array_key_exists('created', $data)) 
+		//	unset($data['created']);
+		if ($is_exists_updated && array_key_exists('updated', $data)) 
+			unset($data['updated']);
+		if ($primary_key_count <= 1) {
+			$format = array();
+			foreach ($data as $column_name => $value) {
+				if (array_key_exists($column_name, $table_schema)) {
+					if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $table_schema[$column_name]['type']) && preg_match('/^(\-|)[0-9]+$/', $value)) {
+						// is integer format
+						$data[$column_name] = intval($value);
+						$format[] = '%d';
+					} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $table_schema[$column_name]['type']) && preg_match('/^(\-|)[0-9]+\.?[0-9]+$/', $value)) {
+						// is double format
+						$data[$column_name] = floatval($value);
+						$format[] = '%f';
+					} else {
+						// is string format
+						$data[$column_name] = strval($value);
+						$format[] = '%s';
+					}
+					if (empty($value)) 
+						$value = null;
+				}
+			}
+		}
+		if (isset($format) && !empty($format) && count($data) == count($format)) {
+			$result = $wpdb->update($table_name, $data, array($primary_key_name => $primary_key_value), $format, array($primary_key_format));
 			$result = ($result) ? $primary_key_value : $result;
 			return $result;
 		} else {
@@ -826,13 +1170,30 @@ class CustomDatabaseTables {
 	/**
 	 * delete data
 	 * @param string $table_name (must containing prefix of table)
-	 * @param int $ID
+	 * @param string $primary_key_value
 	 * @return bool
 	 */
-	function delete_data($table_name, $ID) {
+	function delete_data($table_name, $primary_key_value) {
 		global $wpdb;
-		$ID = intval($ID);
-		return $wpdb->delete($table_name, array('ID' => $ID), array('%d'));
+		list(, , $table_schema) = $this->get_table_schema($table_name);
+		$primary_key_name = null;
+		foreach ($table_schema as $key => $val) {
+			if (empty($primary_key_name) && $val['primary_key']) {
+				$primary_key_name = $key;
+				if (preg_match('/^((|tiny|small|medium|big)int|bool(|ean)|bit)$/', $val['type']) && preg_match('/^(\-|)[0-9]+$/', $primary_key_value)) {
+					$primary_key_value = intval($primary_key_value);
+					$format = '%d';
+				} else if (preg_match('/^(float|double(| precision)|real|dec(|imal)|numeric|fixed)$/', $val['type']) && preg_match('/^(\-|)[0-9]+\.?[0-9]+$/', $primary_key_value)) {
+					$primary_key_value = floatval($primary_key_value);
+					$format = '%f';
+				} else {
+					$primary_key_value = strval($primary_key_value);
+					$format = '%s';
+				}
+				break;
+			}
+		}
+		return $wpdb->delete($table_name, array($primary_key_name => $primary_key_value), array($format));
 	}
 	
 	/**

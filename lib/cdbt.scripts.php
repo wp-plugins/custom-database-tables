@@ -27,8 +27,10 @@ jQuery(document).ready(function($){
 		} else {
 			if ($.QueryString['mode'] == 'input') {
 				if ($.QueryString['action'] == 'update') {
-					console.info(referrer_url);
-					history.go(-2);
+					var cookie_data = getCookie('cdbt_update_referrer').split(',');
+					var data = cookie_data.filter(function(x, i, self) { return self.indexOf(x) === i; });
+					removeCookie('cdbt_update_referrer');
+					location.href = data.pop();
 				} else {
 					location.reload();
 				}
@@ -131,6 +133,7 @@ jQuery(document).ready(function($){
 	}
 	
 	$('.edit-row').on('click', function(){
+		setCookie('cdbt_update_referrer', location.href, 1);
 		$('.controller-form input[name="mode"]').val($(this).attr('data-mode'));
 		$('.controller-form input[name="action"]').val($(this).attr('data-action'));
 		$('.controller-form input[name="ID"]').val($(this).attr('data-id'));
@@ -654,6 +657,61 @@ echo preg_replace('/\n|\r|\t/', '', $html);
 		}
 	});
 	
+	$('#cdbt_generate_api_key').on('click', function(){
+		if ($('#cdbt_api_key').val() != '') {
+			
+			var post_data = {
+				action: 'cdbt_ajax_core', 
+				mode: 'add_api_key', 
+				'host_addr': $('#cdbt_api_key').val(), 
+				token: '<?php echo $ajax_nonce; ?>', 
+				'_ajax_nonce': '<?php echo $action_nonce; ?>' 
+			}
+			$.ajax({
+				type: 'POST', 
+				url: "<?php echo esc_js(esc_url_raw(admin_url('admin-ajax.php', is_ssl() ? 'https' : 'http'))); ?>", 
+				data: post_data
+			}).done(function(res){
+				var res = res.split(',');
+				if (res[0] == 'error') {
+					show_modal('<?php _e('Please confirm', PLUGIN_SLUG); ?>', res[1], '');
+					$('.modal.confirmation').modal('show');
+				} else {
+					location.reload();
+					//$('#api_key_list_tbody').append('<tr><td>' + res[0] + '</td><td>' + res[1] + '</td><td><button></button></td></tr>');
+				}
+			});
+			
+		} else {
+			show_modal('<?php _e('Please confirm', PLUGIN_SLUG); ?>', '<?php _e('Request host address is none.', PLUGIN_SLUG); ?>', '');
+			$('.modal.confirmation').modal('show');
+		}
+	});
+	
+	$('#api_key_list_tbody button[id^="delete_api_key_"]').on('click', function(){
+		$(this).attr('data-api-key')
+		var post_data = {
+			action: 'cdbt_ajax_core', 
+			mode: 'delete_api_key', 
+			'host_addr': $(this).attr('data-api-key'), 
+			token: '<?php echo $ajax_nonce; ?>', 
+			'_ajax_nonce': '<?php echo $action_nonce; ?>' 
+		}
+		$.ajax({
+			type: 'POST', 
+			url: "<?php echo esc_js(esc_url_raw(admin_url('admin-ajax.php', is_ssl() ? 'https' : 'http'))); ?>", 
+			data: post_data
+		}).done(function(res){
+			var res = res.split(',');
+			if (res[0] == 'error') {
+				show_modal('<?php _e('Please confirm', PLUGIN_SLUG); ?>', res[1], '');
+				$('.modal.confirmation').modal('show');
+			} else {
+				location.reload();
+			}
+		});
+	});
+	
 /*
  * for Table Creator
  */
@@ -845,7 +903,6 @@ echo preg_replace('/\n|\r|\t/', '', $html);
 	});
 	
 });
-</script>
 <?php
 	} else {
 		global $cdbt;
@@ -869,6 +926,17 @@ jQuery(document).ready(function($){
 		var current_mode = $('.controller-form input[name="mode"]').val();
 		if (current_mode == 'list' || current_mode == 'edit') {
 			location.reload();
+		} else {
+			if (current_mode == 'input') {
+				if ($('.controller-form input[name="action"]').val() == 'update') {
+					var cookie_data = getCookie('cdbt_update_referrer').split(',');
+					var data = cookie_data.filter(function(x, i, self) { return self.indexOf(x) === i; });
+					removeCookie('cdbt_update_referrer');
+					location.href = data.pop();
+				} else {
+					location.reload();
+				}
+			}
 		}
 	});
 	
@@ -990,6 +1058,7 @@ jQuery(document).ready(function($){
 	});
 	
 	$('.edit-row').on('click', function(){
+		setCookie('cdbt_update_referrer', location.href, 1);
 		$('.controller-form input[name="mode"]').val($(this).attr('data-mode'));
 		$('.controller-form input[name="action"]').val($(this).attr('data-action'));
 		$('.controller-form input[name="ID"]').val($(this).attr('data-id'));
@@ -1076,7 +1145,47 @@ jQuery(document).ready(function($){
 	}
 	
 });
-</script>
 <?php
 	}
+	// Common
+?>
+function setCookie(ck_name, ck_value, expiredays) {
+    // SetCookie
+    var path = '/';
+    var extime = new Date().getTime();
+    var cltime = new Date(extime + (60*60*24*1000*expiredays));
+    var exdate = cltime.toUTCString();
+    var pre_data = getCookie(ck_name);
+    var tmp_data = pre_data.split(',');
+    tmp_data.push(ck_value);
+    var fix_data = tmp_data.filter(function (x, i, self) { return self.indexOf(x) === i; });
+    var s = '';
+    s += ck_name + '=' + escape(fix_data.join(','));
+    s += '; path=' + path;
+    s += expiredays ? '; expires=' + exdate + '; ' : '; ';
+    document.cookie = s;
+}
+function getCookie(ck_name) {
+    // GetCookie
+    var st = '', ed = '', res = '';
+    if (document.cookie.length > 0) {
+    st = document.cookie.indexOf(ck_name + '=');
+    if (st != -1) {
+        st = st + ck_name.length + 1;
+        ed = document.cookie.indexOf(';', st);
+        if (ed == -1) 
+            ed = document.cookie.length;
+            res = unescape(document.cookie.substring(st, ed));
+        }
+    }
+    return res;
+}
+function removeCookie(ck_name) {
+	// removeCookie
+	var path = '/';
+	if (!ck_name || document.cookie.indexOf(ck_name + '=') != -1) { return; }
+	document.cookie = escape(ck_name) + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT' + (path ? '; path=' + path : '');
+}
+</script>
+<?php
 }

@@ -274,8 +274,7 @@ class CustomDatabaseTables {
 	 */
 	function add_action_links($links, $file){
 		if ($file == self::DOMAIN . '/cdbt.php') {
-			$links[] = '<a href="'. admin_url('options-general.php?page=' . self::DOMAIN) .'">'. __('Settings') .'</a>';
-			// $links[] = '<a href="http://www.ka2.org/custom-database-tables/pro/" target="_blank">'. __('Upgrade', self::DOMAIN) .'</a>';
+			array_unshift($links, '<a href="'. admin_url('options-general.php?page=' . self::DOMAIN) .'">'. __('Settings') .'</a>');
 		}
 		return $links;
 	}
@@ -285,7 +284,7 @@ class CustomDatabaseTables {
 	 * @return void
 	 */
 	function create_admin(){
-		$cdbt_plugin_page = add_options_page(__('Custom Database Tables Option: ', self::DOMAIN), __('Custom Database Tables', self::DOMAIN), 'manage_options', self::DOMAIN, array($this, 'admin_controller'), plugin_dir_url(__FILE__) . 'assets/img/undo.png');
+		$cdbt_plugin_page = add_options_page(__('Custom Database Tables Option: ', self::DOMAIN), __('Custom DB Tables', self::DOMAIN), 'manage_options', self::DOMAIN, array($this, 'admin_controller'), '');
 		wp_parse_str($_SERVER['QUERY_STRING'], $this->query);
 		add_action("admin_head-$cdbt_plugin_page", array($this, 'admin_header'));
 		//add_action("load-$cdbt_plugin_page", array($this, 'admin_assets'));
@@ -1043,9 +1042,10 @@ class CustomDatabaseTables {
 	 * @param string $table_name (must containing prefix of table)
 	 * @param array $data
 	 * @param array $table_schema default null
+	 * @param bool $date_init default true
 	 * @return int $insert_id
 	 */
-	function insert_data($table_name, $data, $table_schema=null) {
+	function insert_data($table_name, $data, $table_schema=null, $date_init=true) {
 		global $wpdb;
 		if (empty($table_schema)) 
 			list(, , $table_schema) = $this->get_table_schema($table_name);
@@ -1061,9 +1061,9 @@ class CustomDatabaseTables {
 				$primary_key_count++;
 			}
 			if ($key == 'created') 
-				$is_exists_created = true;
+				$is_exists_created = $date_init;
 			if ($key == 'updated') 
-				$is_exists_updated = true;
+				$is_exists_updated = $date_init;
 		}
 		if (!empty($primary_key_name)) {
 			if ($primary_key_a_i) {
@@ -1072,9 +1072,9 @@ class CustomDatabaseTables {
 				$primary_key_value = $data[$primary_key_name];
 			}
 		}
-		if ($is_exists_created) 
+		if ($is_exists_created || empty($data['created'])) 
 			$data['created'] = date('Y-m-d H:i:s', time());
-		if ($is_exists_updated) 
+		if ($is_exists_updated || empty($data['updated'])) 
 			unset($data['updated']);
 		$format = array();
 		foreach ($data as $column_name => $value) {
@@ -1315,43 +1315,76 @@ class CustomDatabaseTables {
 	 * @return array
 	 */
 	function validate_create_sql($table_name, $sql) {
-		$org_sql = preg_replace("/\r|\n|\t/", '', $sql);
-		$reg_base = '/^(CREATE\sTABLE\s'. $table_name .'\s\()(.*)$/iU';
+		$org_sql = trim(preg_replace("/[\s|\r|\n|\t]+/", ' ', $sql));
+		$reg_base = '/^(CREATE[\s]{1,}TABLE[\s}{1,}'. $table_name .'{\s]{0,}\()(.*)$/iU';
 		if (preg_match($reg_base, $org_sql, $matches)) {
 			// parse while verification
-			$sql_head = $matches[1];
+			$sql_head = "CREATE TABLE `{$table_name}` (";
+			$is_pk_exists = false;
+			$pk_store = null;
 			$reg_type = '((|tiny|small|medium|big)int|float|double(| precision)|decimal|numeric|fixed|bool(|ean)|bit|(|var)char|(|tiny|medium|long)text|(|tiny|medium|long)blob|(|var)binary|enum|set|date(|time)|time(|stamp)|year)';
-			$reg_base = "/(|\s)((|`).*(|`)\s". $reg_type ."(|\(.*\))(\s.*(COMMENT\s'.*'|)|)(,|\)))+/iU";
+			$reg_base = "/(|[\s]{1,})((.*)[\s]{1,}". $reg_type ."(|\(.*\))([\s]{1,}.*(COMMENT[\s]{1,}'.*'|)|)(,|\)))+/iU";
 			$parse_body = array();
 			while (preg_match($reg_base, $matches[2], $one_column)) {
 				$matches[2] = str_replace($one_column[0], '', $matches[2]);
-				if (substr_count($one_column[0], '(') < substr_count($one_column[0], ')')) {
-					$parse_body[] = trim(substr_replace($one_column[0], '', strrpos($one_column[0], ')'), 1), ', ');
+				$column_name = str_replace('`', '', trim($one_column[3]));
+				$column_type = strtolower(trim($one_column[4])) . trim($one_column[14]);
+				if (preg_match("/PRIMARY\sKEY/i", $one_column[15])) {
+					$is_pk_exists = true;
+					if (empty($pk_store)) 
+						$pk_store = $column_name;
+					$column_attributes = trim(preg_replace("/PRIMARY\sKEY/i", '', $one_column[15]));
 				} else {
-					$parse_body[] = trim($one_column[0], ', ');
+					$column_attributes = trim($one_column[15]);
 				}
+				$column_attributes = preg_split("/[\s]{1,}/", $column_attributes);
+				$column_attributes_fixed = array();
+				foreach ($column_attributes as $attribute) {
+					if (!empty($attribute)) 
+						$column_attributes_fixed[] = trim($attribute);
+				}
+				$column_attributes_string = rtrim(implode(' ', $column_attributes_fixed));
+				$parse_body[] = "`{$column_name}` {$column_type} {$column_attributes_string}";
 			}
-			$reg_key = '/((primary key|key|index|unique(| index)|fulltext(| index)|foreign key|check)\s(|.*\s)\(.*\)(,|\)|\s\)))+/iU';
+			$reg_key = "/((primary[\s]{1,}key|key|index|unique(|[\s]{1,}index|[\s]{1,}key)|fulltext(|[\s]{1,}index)|foreign[\s]{1,}key|check)[\s]{0,}(|.*[\s]{1,})\((.*)\)(,|\)|[\s]{1,}\)))+/iU";
 			$parse_key = array();
 			while (preg_match($reg_key, $matches[2], $one_key)) {
 				$matches[2] = str_replace($one_key[0], '', $matches[2]);
-				if (substr_count($one_key[0], '(') < substr_count($one_key[0], ')')) {
-					$parse_key[] = trim(substr_replace($one_key[0], '', strrpos($one_key[0], ')'), 1), ', ');
-				} else {
-					$parse_key[] = trim($one_key[0], ', ');
+				$key_name = trim($one_key[2]);
+				$key_columns = str_replace('`', '', trim($one_key[6]));
+				$key_columns = preg_split("/[\s]{0,},[\s]{0,}/", $key_columns);
+				if (preg_match("/PRIMARY\sKEY/i", $key_name)) {
+					$is_pk_exists = true;
+					if (empty($pk_store)) 
+						$pk_store = $key_columns[0];
+					continue;
 				}
+				$key_attributes = preg_split("/[\s]{1,}/", trim($one_key[5]));
+				$key_attributes_fixed = array();
+				foreach ($key_attributes as $attribute) {
+					if (!empty($attribute)) 
+						$key_attributes_fixed[] = trim($attribute);
+				}
+				$key_attributes_string = rtrim(implode(' ', $key_attributes_fixed));
+				$key_columns_array = array();
+				foreach ($key_columns as $key_column_name) {
+					$key_columns_array[] = "`{$key_column_name}`";
+				}
+				$key_columns_string = implode(',', $key_columns_array);
+				$key_name_fixed = strtoupper($key_name);
+				$parse_key[] = "{$key_name_fixed} {$key_attributes_string} ({$key_columns_string})";
 			}
 			$parse_option = array();
 			$reg_opt = '(type|engine|auto_increment|avg_row_length|checksum|comment|(max|min)_rows|pack_keys|password|delay_key_write|row_format|raid_type|union|insert_method|(data|index) directory|default char(acter set|set))';
-			$reg_base = "/(". $reg_opt ."(|\s)(|=)(|\s)(|'|\().*(|'|\))\s)+/iU";
+			$reg_base = "/(". $reg_opt ."[\s]{0,}(|=)[\s]{0,}(|'|\()(.*)(|'|\))[\s]{1,})+/iU";
 			while (preg_match($reg_base, $matches[2], $one_opt)) {
 				$matches[2] = str_replace($one_opt[0], '', $matches[2]);
 				if (strtolower($one_opt[2]) == 'type' || strtolower($one_opt[2]) == 'engine') {
-					$parse_option[] = trim(preg_replace('/^(.*)(|\s)=(|\s)(BDB|HEAP|ISAM|InnoDB|MERGE|MRG_MYISAM|MYISAM|MyISAM)/', '$1$2=$3%s', $one_opt[0]));
+					$parse_option[] = trim(preg_replace("/^(.*)[\s]{0,}=[\s]{0,}(BDB|HEAP|ISAM|InnoDB|MERGE|MRG_MYISAM|MYISAM|MyISAM)/", '$1$2=$3%s', $one_opt[0]));
 				} else if (strtolower($one_opt[2]) == 'default character set' || strtolower($one_opt[2]) == 'default charset') {
-					$parse_option[] = trim(preg_replace("/^(.*)(|\s)=(|\s)(.*)$/iU", '$1$2=$3%s', $one_opt[0]));
+					$parse_option[] = trim(preg_replace("/^(.*)[\s]{0,}=[\s]{0,}(.*)$/iU", '$1$2=$3%s', $one_opt[0]));
 				} else if (strtolower($one_opt[2]) == 'comment') {
-					$parse_option[] = trim(preg_replace("/^(.*)(|\s)=(|\s)'(.*)'/iU", "$1$2=$3'%s'", $one_opt[0]));
+					$parse_option[] = trim(preg_replace("/^(.*)[\s]{0,}=[\s]{0,}'(.*)'/iU", "$1$2=$3'%s'", $one_opt[0]));
 				} else {
 					$parse_option[] = trim($one_opt[0]);
 				}
@@ -1365,13 +1398,14 @@ class CustomDatabaseTables {
 				foreach ($add_fields as $i => $field) {
 					if (!in_array($field, $parse_body)) {
 						if ($i == 0) {
-							array_unshift($parse_body, $field);
+							if (!$is_pk_exists) 
+								array_unshift($parse_body, $field);
 						} else {
 							array_push($parse_body, $field);
 						}
 					}
 				}
-				$add_key = "PRIMARY KEY (`ID`)";
+				$add_key = !$is_pk_exists ? "PRIMARY KEY (`ID`)" : "PRIMARY KEY (`{$pk_store}`)";
 				if (!in_array($add_key, $parse_key)) {
 					array_unshift($parse_key, $add_key);
 				}
@@ -1402,10 +1436,10 @@ class CustomDatabaseTables {
 				$fixed_sql = $sql_head ."\n". implode(", \n", $parse_body) .$ds. implode(", \n", $parse_key) ."\n) \n". implode(" \n", $parse_option) . ' ;';
 				$result = array(true, $fixed_sql);
 			} else {
-				$result = array(false, null);
+				$result = array(false, 'There is an error in the SQL syntax. Please check the syntax body about column definition in particular.');
 			}
 		} else {
-			$result = array(false, null);
+			$result = array(false, 'There is an error in the SQL syntax. Please check the outer syntax like table name definition in particular.');
 		}
 		return $result;
 	}
@@ -1417,8 +1451,10 @@ class CustomDatabaseTables {
 	 * @return array
 	 */
 	function validate_alter_sql($table_name, $sql) {
-		$org_sql = preg_replace("/\r|\n|\t/", '', $sql);
-		$reg_base = '/^(ALTER\sTABLE\s'. $table_name .'\s)(.*)$/iU';
+		//$org_sql = preg_replace("/\r|\n|\t/", '', $sql);
+		$org_sql = trim(preg_replace("/[\s|\r|\n|\t]+/", ' ', $sql));
+		//$reg_base = '/^(ALTER\sTABLE\s'. $table_name .'\s)(.*)$/iU';
+		$reg_base = '/^(ALTER[\s]{1,}TABLE[\s}{1,}'. $table_name .'{\s]{0,})(.*)$/iU';
 		if (preg_match($reg_base, $org_sql, $matches)) {
 			
 			$fixed_sql = $matches[1] . preg_replace('/(.*)(,|;)$/iU', '$1', trim($matches[2])) . ';';
@@ -1458,17 +1494,27 @@ class CustomDatabaseTables {
 				$diff_ary = array_diff_assoc(array_keys($table_schema), array_keys($import_data[0]));
 				if (empty($diff_ary)) {
 					$insert_ids = array();
+					$local_index = 1;
 					foreach ($import_data as $one_data) {
 						foreach ($table_schema as $column_name => $column_schema) {
-							if (!preg_match('/^(ID|created|updated)$/i', $column_name)) {
+							if ($column_schema['primary_key']) {
+								if ($column_schema['extra'] == 'auto_increment') {
+									unset($one_data[$column_name]);
+								} elseif (empty($one_data[$column_name])) {
+									$one_data[$column_name] = $local_index;
+								}
+							} elseif (!preg_match('/^(created|updated)$/i', $column_name)) {
 								$validate_result = $this->validate_data($column_schema, $one_data[$column_name]);
 								if (!array_shift($validate_result))
 									$one_data[$column_name] = '';
 							} else {
-								unset($one_data[$column_name]);
+								if (empty($one_data[$column_name])) {
+									unset($one_data[$column_name]);
+								}
 							}
 						}
-						$insert_ids[] = $this->insert_data($table_name, $one_data, $table_schema);
+						$insert_ids[] = $this->insert_data($table_name, $one_data, $table_schema, false);
+						$local_index++;
 					}
 					$result = array(true, sprintf(__('Data of %d was imported.', self::DOMAIN), count($insert_ids)));
 				} else {
